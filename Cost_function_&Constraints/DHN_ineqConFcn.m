@@ -1,57 +1,63 @@
 function c = DHN_ineqConFcn(X, U, e, data) %#ok<INUSD>
-%DHN_ineqConFcn Robust inequality constraints c<=0
+%DHN_ineqConFcn Inequality constraints c <= 0
+%
+% U contains ALL inputs:
+%   U(:,1) = q12
+%   U(:,2) = q23
+%   U(:,3) = q34
+%   U(:,4) = q41
+%   U(:,5) = P
+%   U(:,6) = Pd
 
     q_eps = 1e-3;           % kg/s
-    ENFORCE_P_GE_PD = true; % set false if infeasible
+    ENFORCE_P_GE_PD = true;
 
-    nmv = 5;
+    nu_expected = 6;
+    Um = local_makeUMatrix(U, nu_expected);
 
-    % ---- make U = Nu-by-nmv
-    Um = U;
-    if size(Um,2) == nmv
-        % ok
-    elseif size(Um,1) == nmv
-        Um = Um.'; % transpose to Nu-by-nmv
-    end
+    q12 = Um(:,1);
+    q23 = Um(:,2);
+    q34 = Um(:,3);
+    q41 = Um(:,4);
+    Pcol = Um(:,5);
+    Pdcol = Um(:,6);
 
-    Nu = size(Um,1);
+    % q >= q_eps  -->  q_eps - q <= 0
+    c_q = q_eps - [q12; q23; q34; q41];
 
-    % q >= q_eps  ->  q_eps - q <= 0
-    qMat = Um(:,1:4);
-    c_q  = q_eps - qMat(:);
-
+    % P >= Pd  -->  Pd - P <= 0
     if ENFORCE_P_GE_PD
-        PdVec = local_getPdVec(data, Nu);
-        Pcol  = Um(:,5);
-        c_p   = PdVec - Pcol;   % Pd - P <= 0
-        c     = [c_q; c_p(:)];
+        c_p = Pdcol - Pcol;
+        c = [c_q; c_p];
     else
         c = c_q;
     end
 end
 
-function PdVec = local_getPdVec(data, N)
-    Pd = 0;
+function Um = local_makeUMatrix(U, nu_expected)
+    Um = squeeze(U);
 
-    if isstruct(data)
-        if isfield(data,'MD'), Pd = data.MD;
-        elseif isfield(data,'MeasuredDisturbances'), Pd = data.MeasuredDisturbances;
-        elseif isfield(data,'md'), Pd = data.md;
-        elseif isfield(data,'UserData') && isstruct(data.UserData) && isfield(data.UserData,'Pd')
-            Pd = data.UserData.Pd;
-        end
+    if isempty(Um)
+        Um = zeros(0, nu_expected);
+        return
     end
 
-    Pd = Pd(:);
-    if isempty(Pd), Pd = 0; end
-
-    if numel(Pd) == 1
-        PdVec = repmat(Pd, N, 1);
-    else
-        if numel(Pd) < N
-            PdVec = [Pd; Pd(end)*ones(N-numel(Pd),1)];
+    if isvector(Um)
+        if numel(Um) == nu_expected
+            Um = reshape(Um, 1, nu_expected);
         else
-            PdVec = Pd(1:N);
+            error('DHN_ineqConFcn:BadUShape', ...
+                'U has %d elements; expected %d.', numel(Um), nu_expected);
+        end
+    else
+        if size(Um,2) == nu_expected
+            % already Nu-by-6
+        elseif size(Um,1) == nu_expected
+            Um = Um.';
+        else
+            error('DHN_ineqConFcn:BadUShape', ...
+                'U has size %dx%d; expected Nu-by-%d or %d-by-Nu.', ...
+                size(Um,1), size(Um,2), nu_expected, nu_expected);
         end
     end
 end

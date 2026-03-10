@@ -5,17 +5,17 @@ function [Tdot] = DHN_ct_plant(T, q, P, Pd)
 %   T  (4x1) degC : [T1; T2; T3; T4]
 %   q  (4x1) kg/s : [q12; q23; q34; q41]
 %   P  (1x1) W    : producer heat input (node 1)
-%   Pd (1x1) W    : disturbance power (node 3) 
+%   Pd (1x1) W    : disturbance power (node 3)
 %
 % Outputs:
-%   Tdot (4x1)    : temperature derivatives
+%   Tdot (4x1) degC/s : temperature derivatives
 
     % --- Constant ambient temperatures (degC) ---
     Ta = [10; 10; 20; 10];
 
     % Force column vectors
-    T  = T(:);
-    q  = q(:);
+    T = T(:);
+    q = q(:);
 
     % Params (computed once)
     persistent par
@@ -23,13 +23,13 @@ function [Tdot] = DHN_ct_plant(T, q, P, Pd)
         par = DHN_defaultParams();
     end
 
-    M     = par.M;          % 4x4
-    B     = par.B;          % 4x1
+    M     = par.M;          % 4x4, kg
+    B     = par.B;          % 4x1, kg/(J/K) = 1/cp form
     Bd    = par.Bd;         % 4x1
-    kappa = par.kappa;      % 4x1
-    UA    = par.UA;         % 4x1 (W/C)
-    m     = par.m;          % 4x1 (kg)
-    cp    = par.cp;         % scalar
+    kappa = par.kappa;      % 4x1, kg/s
+    % UA  = par.UA;         % 4x1, W/K (not needed directly here)
+    % m   = par.m;          % 4x1, kg   (not needed directly here)
+    % cp  = par.cp;         % scalar    (not needed directly here)
 
     % Flows (ring 1->2->3->4->1)
     q12 = q(1); q23 = q(2); q34 = q(3); q41 = q(4);
@@ -42,83 +42,132 @@ function [Tdot] = DHN_ct_plant(T, q, P, Pd)
     % Heat loss term and total L
     L = Lflow - diag(kappa);
 
-    % d(t) = -Bd*Pd + kappa.*Ta  
+    % d(t) = -Bd*Pd + kappa.*Ta
     d = -Bd*Pd + kappa.*Ta;
 
-    % ODE: Tdot
+    % ODE
     Tdot = M \ (L*T + B*P + d);
 
 end
 
 
 function par = DHN_defaultParams()
+    % -------------------------------------------------------------
     % Constants
-    cp = 4180;                 % J/(kg*C)
-    rho_60C = 983.13;
-    rho_30C = 995.71;
+    % -------------------------------------------------------------
+    cp = 4180;   % J/(kg*K)
+
+    % Densities (as specified)
+    rho_85C = 968.39;   % kg/m^3  -> for T1, T2
+    rho_65C = 980.45;   % kg/m^3  -> for T3, T4
 
     % Node densities [1..4]
-    rho = [rho_60C; rho_60C; rho_60C; rho_30C];
+    rho = [rho_85C; rho_85C; rho_65C; rho_65C];
 
-    % Convection & insulation
-    h_o = 10;                  % W/(m2*C)
-    t_ins = 0.10;              % m
-    lambda_ins = 0.35;         % W/(m*C)
+    % -------------------------------------------------------------
+    % Volumes (m^3)
+    % -------------------------------------------------------------
 
-    % ---- Volumes ----
-    % V1 tank
-    D_in = 60; H_tank = 10; fill_fraction = 0.9;
-    H_water = fill_fraction * H_tank;
-    V1 = (pi*D_in^2/4) * H_water;
+    % ---- V1 Producer volume: SWEP B25T ----
+    % Given:
+    % NoP = 140, channel volume = 0.111 dm^3 per channel per side
+    % Total channels = 139, alternating -> one side 70, other side 69
+    % Chosen producer-side volume = V_out = 69 * 0.111 dm^3 = 7.659 dm^3
+    % Convert dm^3 (L) to m^3
+    V1 = 7.66e-3;   % m^3
 
-    % V2 and V4 pipes
-    D_pipe_in = 0.7; L_pipe = 20;
-    V2 = (pi*D_pipe_in^2/4) * L_pipe;
-    V4 = V2;
+    % ---- V2 and V4 pipes ----
+    % V = pi*D_in^2/4 * L
+    D_pipe_in = 0.012;   % m
+    L_pipe    = 3.0;     % m
+    V2 = (pi * D_pipe_in^2 / 4) * L_pipe;   % m^3
+    V4 = V2;                                    % m^3
 
-    % V3 tube bundle 
-    N_tubes = 20;
-    d_in = 0.01;         % m  
-    L_tube = 0.5;        % m
-    V3 = N_tubes * (pi*d_in^2/4) * L_tube;
+    % ---- V3 Consumer volume: Stelrad Classic Compact K2 600x1000 ----
+    % Water content = 6.60 L for 1000 mm length
+    V3 = 6.60e-3;   % m^3
 
     V = [V1; V2; V3; V4];
+
+    % Masses (kg)
     m = rho .* V;
 
-    % ---- Heat-loss (kappa = UA/cp) ----
-    % Node 1 tank: planar insulation + outside convection
-    A_side = pi*D_in*H_water;
-    A_bottom = pi*D_in^2/4;
-    A1 = A_side + A_bottom;
+    % -------------------------------------------------------------
+    % Heat-loss coefficients
+    % kappa_i = UA_i / cp   [kg/s]
+    % -------------------------------------------------------------
 
-    Rins1 = t_ins / (lambda_ins * A1);
-    Rout1 = 1 / (h_o * A1);
-    UA1 = 1 / (Rins1 + Rout1);
+    % ---- K1 Producer (SWEP B25T, insulated rectangular body) ----
+    % Assumptions:
+    %   NoP = 140
+    %   A = 0.526 m, B = 0.119 m, F = 0.319 m
+    %   t_ins = 0.020 m
+    %   lambda_ins = 0.035 W/(m*K)
+    %   h_out = 8 W/(m^2*K)
 
-    % Node 2/4 pipes: log insulation + outside convection
-    r1 = D_pipe_in/2;
-    r2 = r1 + t_ins;
-    Rins_p = log(r2/r1) / (2*pi*lambda_ins);
-    Rout_p = 1 / (h_o * 2*pi*r2);
-    UA_pipe = L_pipe / (Rins_p + Rout_p);
+    HX_A = 0.526;   % m
+    HX_B = 0.119;   % m
+    HX_F = 0.319;   % m
+
+    A_surf = 2 * (HX_A*HX_B + HX_A*HX_F + HX_B*HX_F);   % m^2
+
+    t_ins_prod      = 0.020;   % m
+    lambda_ins_prod = 0.035;   % W/(m*K)
+    h_out_prod      = 8.0;     % W/(m^2*K)
+
+    U1  = 1 / (t_ins_prod/lambda_ins_prod + 1/h_out_prod); % W/(m^2*K)
+    UA1 = U1 * A_surf;                                       % W/K
+
+    % ---- K2 and K4 Pipes ----
+    % Assumptions:
+    %   insulation thickness = 0.020 m
+    %   lambda_ins = 0.035 W/(m*K)
+    %   h_o = 10 W/(m^2*K)
+    %   outer diameter d_o = 0.016 m
+    %   length = 3 m
+
+    d_o        = 0.016;   % m
+    r1         = d_o / 2; % m
+    t_ins_pipe = 0.020;   % m
+    r2         = r1 + t_ins_pipe; % m
+
+    h_o        = 10.0;    % W/(m^2*K)
+    lambda_ins = 0.035;   % W/(m*K)
+
+    Rins_p = log(r2/r1) / (2*pi*lambda_ins); % K/W per m
+    Rout_p = 1 / (h_o * 2*pi*r2);            % K/W per m
+    Rtot_p = Rins_p + Rout_p;                % K/W per m
+
+    UA_pipe = L_pipe / Rtot_p;               % W/K for one 3 m pipe
     UA2 = UA_pipe;
     UA4 = UA_pipe;
 
-    % Node 3 radiator to room: UA = (h_conv + h_rad)*A
-    h_conv = 10; h_rad = 5.5; h_total = h_conv + h_rad;
-    hx_L = 1.0; hx_W = 0.5; hx_H = 0.15;
-    A3 = 2*(hx_L*hx_W + hx_L*hx_H + hx_W*hx_H);
-    UA3 = h_total * A3;
+    % ---- K3 Consumer (Stelrad radiator) ----
+    % Stelrad Classic Compact K2, 600x1000
+    % Rated output = 1732 W at 75/65/20
+    % Mean temperature difference:
+    % DeltaT_m = (75 + 65)/2 - 20 = 50 K
+    % UA = Q / DeltaT_m
 
+    Q3_rated = 1732;   % W
+    DeltaT_m = 50;     % K
+    UA3 = Q3_rated / DeltaT_m;   % W/K
+
+    % Collect UA and kappa
     UA = [UA1; UA2; UA3; UA4];
-    kappa = UA / cp;
+    kappa = UA / cp;   % kg/s
 
+    % -------------------------------------------------------------
     % Inputs
+    % -------------------------------------------------------------
     B  = (1/cp) * [1; 0; 0; 0];
     Bd = (1/cp) * [0; 0; 1; 0];
 
-    % Pack
+    % -------------------------------------------------------------
+    % Pack parameters
+    % -------------------------------------------------------------
     par.cp    = cp;
+    par.rho   = rho;
     par.V     = V;
     par.m     = m;
     par.M     = diag(m);
