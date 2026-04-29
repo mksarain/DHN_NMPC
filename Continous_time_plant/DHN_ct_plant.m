@@ -24,12 +24,9 @@ function [Tdot] = DHN_ct_plant(T, q, P, Pd)
     end
 
     M     = par.M;          % 4x4, kg
-    B     = par.B;          % 4x1, kg/(J/K) = 1/cp form
+    B     = par.B;          % 4x1
     Bd    = par.Bd;         % 4x1
     kappa = par.kappa;      % 4x1, kg/s
-    % UA  = par.UA;         % 4x1, W/K (not needed directly here)
-    % m   = par.m;          % 4x1, kg   (not needed directly here)
-    % cp  = par.cp;         % scalar    (not needed directly here)
 
     % Flows (ring 1->2->3->4->1)
     q12 = q(1); q23 = q(2); q34 = q(3); q41 = q(4);
@@ -57,12 +54,11 @@ function par = DHN_defaultParams()
     % -------------------------------------------------------------
     cp = 4180;   % J/(kg*K)
 
-    % Densities (as specified)
-    rho_85C = 968.39;   % kg/m^3  -> for T1, T2
-    rho_65C = 980.45;   % kg/m^3  -> for T3, T4
-
-    % Node densities [1..4]
-    rho = [rho_85C; rho_85C; rho_65C; rho_65C];
+    % -------------------------------------------------------------
+    % Densities based on updated reference temperatures:
+    % [80, 80, 70, 60] degC
+    % -------------------------------------------------------------
+    rho = [971.79; 971.79; 977.76; 980.55];   % kg/m^3
 
     % -------------------------------------------------------------
     % Volumes (m^3)
@@ -77,9 +73,10 @@ function par = DHN_defaultParams()
     V1 = 7.66e-3;   % m^3
 
     % ---- V2 and V4 pipes ----
+    % Household pipe lengths
     % V = pi*D_in^2/4 * L
     D_pipe_in = 0.012;   % m
-    L_pipe    = 3.0;     % m
+    L_pipe    = 21.0;     % m
     V2 = (pi * D_pipe_in^2 / 4) * L_pipe;   % m^3
     V4 = V2;                                    % m^3
 
@@ -142,16 +139,26 @@ function par = DHN_defaultParams()
     UA2 = UA_pipe;
     UA4 = UA_pipe;
 
-    % ---- K3 Consumer (Stelrad radiator) ----
-    % Stelrad Classic Compact K2, 600x1000
-    % Rated output = 1732 W at 75/65/20
-    % Mean temperature difference:
-    % DeltaT_m = (75 + 65)/2 - 20 = 50 K
-    % UA = Q / DeltaT_m
+    % % ---- K3 Consumer (Stelrad radiator) ----
+    % % Stelrad Classic Compact K2, 600x1000
+    % % Rated output = 1732 W at 75/65/20
+    % % Mean temperature difference:
+    % % DeltaT_m = (75 + 65)/2 - 20 = 50 K
+    % % UA = Q / DeltaT_m
+    % 
+    % % Q3_rated = 1732;   % W
+    % % DeltaT_m = 50;     % K
+    % % UA3 = Q3_rated / DeltaT_m;   % W/K
 
-    Q3_rated = 1732;   % W
-    DeltaT_m = 50;     % K
-    UA3 = Q3_rated / DeltaT_m;   % W/K
+    % ---- K3 Consumer/load node ----
+    % Pd already represents the prescribed consumer heat extraction at node 3.
+    % Therefore, the radiator heat-transfer term UA3*(T3-Ta3) is not included
+    % here, otherwise the consumer load would be counted twice.
+    %
+    % Node 3 heat removal is now represented only by:
+    %       -Bd * Pd
+    %
+    UA3 = 0;   % W/K
 
     % Collect UA and kappa
     UA = [UA1; UA2; UA3; UA4];
